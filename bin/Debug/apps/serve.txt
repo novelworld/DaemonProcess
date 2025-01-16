@@ -1,0 +1,2 @@
+D:\project\client\TR.Main\bin\Debug\Main.exe autoStart
+30
