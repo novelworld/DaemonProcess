@@ -67,93 +67,112 @@ namespace DaemonProcess
             public int process_id { get; set; } = 0;
             public string process_name { get; set; }
             public int time { get; set; } = 0;
+            /// <summary>
+            /// 检查次数，超过2次则判定
+            /// </summary>
+            public int check_time { get; set; } = 0;
+            public int try_time { get; set; } = 0;
         }
+        private static object loclword =new object();
         private static void TimerCallbackMethod(Object o)
         {
             // 这里是定时器触发时执行的代码
-            
-            foreach(var app in apps)
+            lock(loclword)
             {
-                app.time -= 5; 
-                if (app.time <= 0)
+                foreach (var app in apps)
                 {
-                    Console.WriteLine("checking {0} {1}", app.path,DateTime.Now.ToString());
-                    app.time = app.dely;
-                    //检查
-                    if (app.process_id >0 )
+                    app.time -= 5;
+                    if (app.time <= 0)
                     {
-                        try
+                        // Console.WriteLine("checking {0} {1}", app.path,DateTime.Now.ToString());
+                        app.time = app.dely;
+                        //app.try_time = 0;
+                        //检查
+                        if (app.process_id > 0)
                         {
-                            var process = Process.GetProcessById(app.process_id);
-                            if (process != null)
+                            app.try_time = 0;
+                            try
                             {
-                                ProcessStartInfo startInfo = process.StartInfo;
-                                string processName = process.ProcessName;
-                                string fileName = startInfo.FileName;
+                                var process = Process.GetProcessById(app.process_id);
+                                if (process != null)
+                                {
+                                    ProcessStartInfo startInfo = process.StartInfo;
+                                    string processName = process.ProcessName;
+                                    string fileName = startInfo.FileName;
 
-                                // 如果FileName不包含完整路径，则尝试使用MainModule.FileName
-                                if (string.IsNullOrEmpty(fileName) || !Path.IsPathRooted(fileName))
-                                {
-                                    try
+                                    // 如果FileName不包含完整路径，则尝试使用MainModule.FileName
+                                    if (string.IsNullOrEmpty(fileName) || !Path.IsPathRooted(fileName))
                                     {
-                                        fileName = process.MainModule.FileName;
+                                        try
+                                        {
+                                            fileName = process.MainModule.FileName;
+                                        }
+                                        catch (Win32Exception)
+                                        {
+                                            // 如果没有足够的权限访问MainModule，则忽略该进程
+                                            continue;
+                                        }
                                     }
-                                    catch (Win32Exception)
+                                    if (!ArePathsEqual(fileName, app.path))
                                     {
-                                        // 如果没有足够的权限访问MainModule，则忽略该进程
-                                        continue;
+                                        app.process_id = 0;
                                     }
                                 }
-                                if (!ArePathsEqual(fileName, app.path))
-                                {
-                                    app.process_id = 0;
-                                }
+
+                            }
+                            catch
+                            {
+                                app.process_id = 0;
                             }
 
                         }
-                        catch
+                        if (app.process_id == 0)
                         {
-                            app.process_id = 0;
+                            app.try_time++;
+                            if (app.check_time > 0 && app.try_time < app.check_time)
+                            {
+                                Console.WriteLine("checking {0} 剩余尝试次数:{1}", app.path, app.check_time - app.try_time);
+                                app.time = 10;
+                                continue;
+                            }
+                            app.time = app.dely;
+                            //重启
+                            ProcessStartInfo startInfo = new ProcessStartInfo
+                            {
+                                FileName = app.path,
+                                // 如果需要传递命令行参数，可以在这里设置
+                                Arguments = app.arg,
+                                // 设置是否使用操作系统外壳程序启动进程（例如，是否通过cmd.exe启动）
+                                // UseShellExecute = true, 
+                                // 设置是否将进程的窗口隐藏
+                                // CreateNoWindow = true, 
+                                // 设置工作目录（可选）
+                                // WorkingDirectory = @"C:\Some\Directory",
+                                // 重定向标准输入/输出/错误流（如果需要与进程交互）
+                                // RedirectStandardInput = true,
+                                // RedirectStandardOutput = true,
+                                // RedirectStandardError = true,
+                            };
+                            logger.WriteLog(string.Format("start {0}", app.path));
+                            // 启动进程并获取进程对象
+                            using (Process process = Process.Start(startInfo))
+                            {
+                                if (process != null)
+                                {
+                                    app.process_id = process.Id;
+                                }
+                                else
+                                {
+                                    Console.WriteLine("err {0} {1}", app.path, DateTime.Now.ToString());
+
+                                }
+                            }
                         }
-                       
                     }
-                    if(app.process_id == 0)
-                    {
-                        //重启
-                        ProcessStartInfo startInfo = new ProcessStartInfo
-                        {
-                            FileName = app.path,
-                            // 如果需要传递命令行参数，可以在这里设置
-                            Arguments = app.arg,
-                            // 设置是否使用操作系统外壳程序启动进程（例如，是否通过cmd.exe启动）
-                            // UseShellExecute = true, 
-                            // 设置是否将进程的窗口隐藏
-                            // CreateNoWindow = true, 
-                            // 设置工作目录（可选）
-                            // WorkingDirectory = @"C:\Some\Directory",
-                            // 重定向标准输入/输出/错误流（如果需要与进程交互）
-                            // RedirectStandardInput = true,
-                            // RedirectStandardOutput = true,
-                            // RedirectStandardError = true,
-                        };
-                        logger.WriteLog(string.Format("start {0}", app.path)); 
-                        // 启动进程并获取进程对象
-                        using (Process process = Process.Start(startInfo))
-                        {
-                            if (process != null)
-                            {
-                                app.process_id = process.Id; 
-                            }
-                            else
-                            {
-                                Console.WriteLine("err {0} {1}", app.path, DateTime.Now.ToString()); 
-                              
-                            }
-                        } 
-                    } 
-                }
 
-            } 
+                }
+            }
+            
 
         }
         private static Logger logger = null;
@@ -183,11 +202,16 @@ namespace DaemonProcess
                         {
                             sps.RemoveAt(0);
                             var dely = 300;
+                            var check_time = 3;
                             if (lines.Length > 1)
                             {
                                 int.TryParse(lines[1], out dely);
                             }
-                            apps.Add(new appConfig() { path = path, arg = string.Join(" ", sps), dely = dely });
+                            if (lines.Length > 2)
+                            {
+                                int.TryParse(lines[2], out check_time);
+                            }
+                            apps.Add(new appConfig() { path = path, arg = string.Join(" ", sps), dely = dely ,check_time= check_time });
                         }
 
                     }
@@ -248,10 +272,20 @@ namespace DaemonProcess
                 Console.WriteLine("Monit "+app.path);
             }
             // 初始化定时器，设置初始延迟为0毫秒，周期为1000毫秒（1秒）
+            
             _timer = new Timer(TimerCallbackMethod, null, 0, 5000);
             //保持主线程运行，以便定时器可以触发回调
-            Console.WriteLine("Press Enter to exit the program.");
-            Console.ReadLine(); 
+            string input = Console.ReadLine();
+
+            if (input.ToLower() == "exit")
+            {
+                Console.WriteLine("正在退出程序...");
+
+            }
+            else
+            {
+                input = Console.ReadLine();
+            }
             // 停止定时器
             _timer.Dispose();
         }
